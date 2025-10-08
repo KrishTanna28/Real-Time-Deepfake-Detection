@@ -24,8 +24,8 @@ model = InceptionResnetV1(
     num_classes=1,
     device=DEVICE
 )
-checkpoint = torch.load("weights\\resnetinceptionv1_epoch_32.pth",map_location=torch.device('cpu'))
-model.load_state_dict(checkpoint["model_state_dict"])
+# checkpoint = torch.load("weights\\resnetinceptionv1_epoch_32.pth",map_location=torch.device('cpu'))
+# model.load_state_dict(checkpoint["model_state_dict"])
 model.to(DEVICE)
 model.eval()
 def predict(frame):
@@ -49,8 +49,7 @@ def predict(frame):
         input_face = input_face.to(DEVICE).to(torch.float32) / 255.0
 
         target_layers = [model.block8.branch1[-1]]
-        use_cuda = True if torch.cuda.is_available() else False
-        cam = GradCAM(model=model, target_layers=target_layers, use_cuda=use_cuda)
+        cam = GradCAM(model=model, target_layers=target_layers)
         targets = [ClassifierOutputTarget(0)]
 
         grayscale_cam = cam(input_tensor=input_face, targets=targets, eigen_smooth=True)
