@@ -9,19 +9,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.action === 'stopDetection') {
     handleStopDetection(sendResponse);
     return true;
-  } else if (message.action === 'captureTab') {
-    handleCaptureTab(sender.tab.id, sendResponse);
-    return true;
   } else if (message.action === 'detectionResult') {
-    // Forward results to popup
-    chrome.runtime.sendMessage(message);
+    // Forward results to popup (ignore if popup is closed)
+    chrome.runtime.sendMessage(message).catch(() => {});
   } else if (message.action === 'detectionError') {
-    // Forward errors to popup
-    chrome.runtime.sendMessage(message);
+    // Forward errors to popup (ignore if popup is closed)
+    chrome.runtime.sendMessage(message).catch(() => {});
   } else if (message.action === 'detectionStopped') {
     activeDetectionTabId = null;
     chrome.storage.local.set({ isDetecting: false });
-    chrome.runtime.sendMessage(message);
+    chrome.runtime.sendMessage(message).catch(() => {});
   }
 });
 
@@ -35,15 +32,23 @@ async function handleStartDetection(tabId, sendResponse) {
 
     // Test backend connection
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
       const response = await fetch(`${backendUrl}/health`, {
         method: 'GET',
-        signal: AbortSignal.timeout(5000)
+        signal: controller.signal
       });
+      
+      clearTimeout(timeoutId);
       
       if (!response.ok) {
         throw new Error('Backend not responding');
       }
+      
+      console.log('Backend health check passed');
     } catch (error) {
+      console.error('Backend health check failed:', error);
       sendResponse({ 
         success: false, 
         error: 'Backend server not available. Please start the backend server first.' 
@@ -51,16 +56,9 @@ async function handleStartDetection(tabId, sendResponse) {
       return;
     }
 
-    // Inject content script if not already injected
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: tabId },
-        files: ['content.js']
-      });
-    } catch (error) {
-      // Content script might already be injected, continue
-      console.log('Content script already injected or error:', error);
-    }
+    // Content script is auto-injected via manifest
+    // Wait a bit to ensure it's ready
+    await new Promise(resolve => setTimeout(resolve, 300));
 
     // Send start message to content script
     chrome.tabs.sendMessage(tabId, {
@@ -68,11 +66,17 @@ async function handleStartDetection(tabId, sendResponse) {
       interval: captureInterval
     }, (response) => {
       if (chrome.runtime.lastError) {
-        sendResponse({ success: false, error: chrome.runtime.lastError.message });
-      } else {
+        console.error('Failed to communicate with content script:', chrome.runtime.lastError);
+        sendResponse({ 
+          success: false, 
+          error: 'Could not establish connection. Refresh the page and try again.' 
+        });
+      } else if (response && response.success) {
         activeDetectionTabId = tabId;
         chrome.storage.local.set({ isDetecting: true });
         sendResponse({ success: true });
+      } else {
+        sendResponse({ success: false, error: 'Content script failed to start' });
       }
     });
 
@@ -95,22 +99,6 @@ function handleStopDetection(sendResponse) {
   } else {
     chrome.storage.local.set({ isDetecting: false });
     sendResponse({ success: true });
-  }
-}
-
-// Capture current tab as image
-async function handleCaptureTab(tabId, sendResponse) {
-  try {
-    // Capture visible tab
-    const dataUrl = await chrome.tabs.captureVisibleTab(null, {
-      format: 'png',
-      quality: 90
-    });
-
-    sendResponse({ dataUrl: dataUrl });
-  } catch (error) {
-    console.error('Error capturing tab:', error);
-    sendResponse({ error: error.message });
   }
 }
 

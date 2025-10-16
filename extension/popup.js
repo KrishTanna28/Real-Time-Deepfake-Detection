@@ -16,7 +16,9 @@ const stabilityProgress = document.getElementById('stabilityProgress');
 const framesAnalyzedEl = document.getElementById('framesAnalyzed');
 const backendUrlInput = document.getElementById('backendUrl');
 const captureIntervalInput = document.getElementById('captureInterval');
-const saveSettingsBtn = document.getElementById('saveSettings');
+const testConnectionBtn = document.getElementById('testConnection');
+const testContentScriptBtn = document.getElementById('testContentScript');
+const connectionStatus = document.getElementById('connectionStatus');
 
 // Load settings
 chrome.storage.local.get(['backendUrl', 'captureInterval'], (result) => {
@@ -28,20 +30,71 @@ chrome.storage.local.get(['backendUrl', 'captureInterval'], (result) => {
   }
 });
 
-// Save settings
-saveSettingsBtn.addEventListener('click', () => {
-  const settings = {
-    backendUrl: backendUrlInput.value,
-    captureInterval: parseInt(captureIntervalInput.value)
-  };
+// Auto-save settings on change
+backendUrlInput.addEventListener('change', () => {
+  chrome.storage.local.set({ backendUrl: backendUrlInput.value });
+});
+
+captureIntervalInput.addEventListener('change', () => {
+  chrome.storage.local.set({ captureInterval: parseInt(captureIntervalInput.value) });
+});
+
+// Test backend connection
+testConnectionBtn.addEventListener('click', async () => {
+  const backendUrl = backendUrlInput.value || 'http://localhost:5000';
+  connectionStatus.style.display = 'block';
+  connectionStatus.textContent = '⏳ Testing backend...';
+  connectionStatus.style.color = '#ffc107';
   
-  chrome.storage.local.set(settings, () => {
-    // Visual feedback
-    saveSettingsBtn.textContent = '✓ Saved';
-    setTimeout(() => {
-      saveSettingsBtn.textContent = 'Save Settings';
-    }, 1500);
-  });
+  try {
+    const response = await fetch(`${backendUrl}/health`, {
+      method: 'GET'
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      connectionStatus.textContent = `✅ Backend OK! Model: ${data.model_loaded ? 'Loaded' : 'Not loaded'}, Device: ${data.device}`;
+      connectionStatus.style.color = '#28a745';
+    } else {
+      connectionStatus.textContent = `❌ Backend error: ${response.status}`;
+      connectionStatus.style.color = '#dc3545';
+    }
+  } catch (error) {
+    connectionStatus.textContent = `❌ Backend failed: ${error.message}`;
+    connectionStatus.style.color = '#dc3545';
+  }
+});
+
+// Test content script injection
+testContentScriptBtn.addEventListener('click', async () => {
+  connectionStatus.style.display = 'block';
+  connectionStatus.textContent = '⏳ Testing content script...';
+  connectionStatus.style.color = '#ffc107';
+  
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    
+    // Check if we're on a valid page
+    if (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+      connectionStatus.textContent = `❌ Cannot run on chrome:// pages. Go to YouTube or any website.`;
+      connectionStatus.style.color = '#dc3545';
+      return;
+    }
+    
+    // Try to ping content script (it's auto-injected)
+    chrome.tabs.sendMessage(tab.id, { action: 'ping' }, (response) => {
+      if (chrome.runtime.lastError) {
+        connectionStatus.textContent = `❌ Content script not loaded. Refresh the page and try again.`;
+        connectionStatus.style.color = '#dc3545';
+      } else {
+        connectionStatus.textContent = `✅ Content script OK! Ready to detect.`;
+        connectionStatus.style.color = '#28a745';
+      }
+    });
+  } catch (error) {
+    connectionStatus.textContent = `❌ Test failed: ${error.message}`;
+    connectionStatus.style.color = '#dc3545';
+  }
 });
 
 // Start detection
@@ -50,17 +103,29 @@ startBtn.addEventListener('click', async () => {
     // Get current tab
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     
+    console.log('Starting detection on tab:', tab.id);
+    
     // Send message to background script to start detection
     chrome.runtime.sendMessage({
       action: 'startDetection',
       tabId: tab.id
     }, (response) => {
+      console.log('Start detection response:', response);
+      
+      if (chrome.runtime.lastError) {
+        console.error('Runtime error:', chrome.runtime.lastError);
+        alert('Extension error: ' + chrome.runtime.lastError.message);
+        return;
+      }
+      
       if (response && response.success) {
         isDetecting = true;
         updateUI();
         resultsSection.style.display = 'block';
       } else {
-        alert('Failed to start detection. Make sure the backend server is running.');
+        const errorMsg = response?.error || 'Unknown error occurred';
+        console.error('Detection failed:', errorMsg);
+        alert('Failed to start detection.\n\n' + errorMsg + '\n\nMake sure:\n1. Backend server is running (python backend_server.py)\n2. Backend URL is correct (check settings)');
       }
     });
   } catch (error) {
@@ -137,15 +202,15 @@ function updateResults(data) {
   }
 
   // Update status based on classification
-  if (classification === 'HIGH_FAKE') {
+  if (classification === 'FAKE' || classification === 'HIGH_FAKE') {
     statusDot.className = 'status-dot alert';
-    statusText.textContent = 'Deepfake Detected!';
-  } else if (classification === 'HIGH_REAL') {
+    statusText.textContent = '🔴 Deepfake Detected!';
+  } else if (classification === 'REAL' || classification === 'HIGH_REAL') {
     statusDot.className = 'status-dot active';
-    statusText.textContent = 'Authentic Video';
+    statusText.textContent = '🟢 Authentic Video';
   } else {
     statusDot.className = 'status-dot analyzing';
-    statusText.textContent = 'Analyzing...';
+    statusText.textContent = '🟡 Analyzing...';
   }
 }
 

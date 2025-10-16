@@ -19,28 +19,44 @@ def detect_bounding_box(frame):
     Returns:
         List of tuples: [(x, y, w, h), ...] representing face bounding boxes
     """
-    # Convert to grayscale for face detection
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    try:
+        # Validate input
+        if frame is None or frame.size == 0:
+            return []
+        
+        # Ensure frame has valid dimensions
+        if len(frame.shape) < 2 or frame.shape[0] < 30 or frame.shape[1] < 30:
+            return []
+        
+        # Convert to grayscale for face detection
+        if len(frame.shape) == 3:
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = frame
+        
+        # Detect faces with error handling
+        # Parameters:
+        # - scaleFactor: How much the image size is reduced at each image scale
+        # - minNeighbors: How many neighbors each candidate rectangle should have to retain it
+        # - minSize: Minimum possible object size
+        faces = face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(30, 30),
+            flags=cv2.CASCADE_SCALE_IMAGE
+        )
+        
+        # Convert to list of tuples
+        face_boxes = []
+        for (x, y, w, h) in faces:
+            face_boxes.append((x, y, w, h))
+        
+        return face_boxes
     
-    # Detect faces
-    # Parameters:
-    # - scaleFactor: How much the image size is reduced at each image scale
-    # - minNeighbors: How many neighbors each candidate rectangle should have to retain it
-    # - minSize: Minimum possible object size
-    faces = face_cascade.detectMultiScale(
-        gray,
-        scaleFactor=1.1,
-        minNeighbors=5,
-        minSize=(30, 30),
-        flags=cv2.CASCADE_SCALE_IMAGE
-    )
-    
-    # Convert to list of tuples
-    face_boxes = []
-    for (x, y, w, h) in faces:
-        face_boxes.append((x, y, w, h))
-    
-    return face_boxes
+    except Exception as e:
+        print(f"Error in face detection: {e}")
+        return []
 
 def draw_bounding_boxes(frame, faces, color=(0, 255, 0), thickness=2):
     """

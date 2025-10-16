@@ -67,16 +67,21 @@
     </div>
 
     <div class="settings-section">
-      <h3>Settings</h3>
+      <h3>⚙️ Configuration</h3>
       <div class="setting-item">
-        <label for="backendUrl">Backend URL:</label>
-        <input type="text" id="backendUrl" value="http://localhost:5000" />
+        <label for="backendUrl">Backend URL</label>
+        <input type="text" id="backendUrl" value="http://localhost:5000" placeholder="http://localhost:5000" />
+        <button id="testConnection" class="btn btn-small" style="margin-top: 8px; background: #28a745;">Test Backend</button>
+        <button id="testContentScript" class="btn btn-small" style="margin-top: 8px; background: #17a2b8;">Test Content Script</button>
+        <div id="connectionStatus" style="margin-top: 8px; font-size: 12px; display: none;"></div>
       </div>
       <div class="setting-item">
-        <label for="captureInterval">Capture Interval (ms):</label>
-        <input type="number" id="captureInterval" value="1000" min="500" max="5000" step="100" />
+        <label for="captureInterval">Analysis Interval</label>
+        <div class="input-with-suffix">
+          <input type="number" id="captureInterval" value="1000" min="500" max="5000" step="100" />
+          <span class="input-suffix">ms</span>
+        </div>
       </div>
-      <button id="saveSettings" class="btn btn-small">Save Settings</button>
     </div>
 
     <div class="footer">

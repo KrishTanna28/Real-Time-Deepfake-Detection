@@ -1,16 +1,25 @@
 // Content script for capturing tab content and displaying overlay
-let overlayIframe = null;
-let captureInterval = null;
-let isCapturing = false;
+console.log('Deepfake Detection: Content script loaded');
+
+// Global variables (use window to avoid redeclaration)
+if (!window.deepfakeDetection) {
+  window.deepfakeDetection = {
+    overlayIframe: null,
+    captureInterval: null,
+    isCapturing: false
+  };
+}
+
+const state = window.deepfakeDetection;
 
 // Create and inject overlay
 function createOverlay() {
-  if (overlayIframe) return;
+  if (state.overlayIframe) return;
 
-  overlayIframe = document.createElement('iframe');
-  overlayIframe.id = 'deepfake-detection-overlay';
-  overlayIframe.src = chrome.runtime.getURL('overlay.html');
-  overlayIframe.style.cssText = `
+  state.overlayIframe = document.createElement('iframe');
+  state.overlayIframe.id = 'deepfake-detection-overlay';
+  state.overlayIframe.src = chrome.runtime.getURL('overlay.html');
+  state.overlayIframe.style.cssText = `
     position: fixed;
     top: 0;
     right: 0;
@@ -21,27 +30,54 @@ function createOverlay() {
     pointer-events: auto;
   `;
   
-  document.body.appendChild(overlayIframe);
+  document.body.appendChild(state.overlayIframe);
 }
 
 // Remove overlay
 function removeOverlay() {
-  if (overlayIframe) {
-    overlayIframe.remove();
-    overlayIframe = null;
+  if (state.overlayIframe) {
+    state.overlayIframe.remove();
+    state.overlayIframe = null;
   }
 }
 
-// Capture current tab as image
+// Capture current page as image using canvas
 async function captureTab() {
   return new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage({ action: 'captureTab' }, (response) => {
-      if (response && response.dataUrl) {
-        resolve(response.dataUrl);
-      } else {
-        reject(new Error('Failed to capture tab'));
+    try {
+      // Find video element on the page
+      const video = document.querySelector('video');
+      
+      if (!video) {
+        reject(new Error('No video found on page'));
+        return;
       }
-    });
+
+      // Check if video is ready
+      if (video.readyState < 2) {
+        reject(new Error('Video not ready yet'));
+        return;
+      }
+
+      // Create canvas to capture video frame
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      
+      if (canvas.width === 0 || canvas.height === 0) {
+        reject(new Error('Video has no dimensions'));
+        return;
+      }
+      
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      
+      // Convert to data URL
+      const dataUrl = canvas.toDataURL('image/png');
+      resolve(dataUrl);
+    } catch (error) {
+      reject(error);
+    }
   });
 }
 
@@ -52,25 +88,36 @@ async function analyzeFrame(imageDataUrl) {
     const settings = await chrome.storage.local.get(['backendUrl']);
     const backendUrl = settings.backendUrl || 'http://localhost:5000';
 
+    console.log('Sending frame to backend:', backendUrl);
+
     // Convert data URL to blob
-    const response = await fetch(imageDataUrl);
-    const blob = await response.blob();
+    const base64Data = imageDataUrl.split(',')[1];
+    const byteCharacters = atob(base64Data);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: 'image/png' });
 
     // Create form data
     const formData = new FormData();
     formData.append('frame', blob, 'frame.png');
 
-    // Send to backend
+    // Send to backend with proper error handling
     const analysisResponse = await fetch(`${backendUrl}/analyze`, {
       method: 'POST',
-      body: formData
+      body: formData,
+      mode: 'cors'
     });
 
     if (!analysisResponse.ok) {
-      throw new Error('Backend analysis failed');
+      const errorText = await analysisResponse.text();
+      throw new Error(`Backend error ${analysisResponse.status}: ${errorText}`);
     }
 
     const result = await analysisResponse.json();
+    console.log('Analysis result:', result);
     return result;
   } catch (error) {
     console.error('Error analyzing frame:', error);
@@ -80,15 +127,15 @@ async function analyzeFrame(imageDataUrl) {
 
 // Start capturing and analyzing
 async function startDetection(interval = 1000) {
-  if (isCapturing) return;
+  if (state.isCapturing) return;
 
-  isCapturing = true;
+  state.isCapturing = true;
   createOverlay();
 
   // Update overlay with initial status
   updateOverlay({ status: 'analyzing' });
 
-  captureInterval = setInterval(async () => {
+  state.captureInterval = setInterval(async () => {
     try {
       // Capture current tab
       const imageDataUrl = await captureTab();
@@ -99,65 +146,96 @@ async function startDetection(interval = 1000) {
       // Update overlay with results
       updateOverlay(result);
 
-      // Send results to popup
-      chrome.runtime.sendMessage({
-        action: 'detectionResult',
-        data: result
-      });
+      // Send results to popup (ignore if popup is closed)
+      try {
+        chrome.runtime.sendMessage({
+          action: 'detectionResult',
+          data: result
+        });
+      } catch (e) {
+        // Popup might be closed, ignore
+      }
 
     } catch (error) {
       console.error('Detection error:', error);
-      chrome.runtime.sendMessage({
-        action: 'detectionError',
-        error: error.message
-      });
+      
+      // Send error to popup (ignore if popup is closed)
+      try {
+        chrome.runtime.sendMessage({
+          action: 'detectionError',
+          error: error.message
+        });
+      } catch (e) {
+        // Popup might be closed, ignore
+      }
     }
   }, interval);
 }
 
 // Stop detection
 function stopDetection() {
-  if (captureInterval) {
-    clearInterval(captureInterval);
-    captureInterval = null;
+  if (state.captureInterval) {
+    clearInterval(state.captureInterval);
+    state.captureInterval = null;
   }
-  isCapturing = false;
+  state.isCapturing = false;
   removeOverlay();
 
-  chrome.runtime.sendMessage({ action: 'detectionStopped' });
+  // Send stopped message (ignore if popup is closed)
+  try {
+    chrome.runtime.sendMessage({ action: 'detectionStopped' });
+  } catch (e) {
+    // Popup might be closed, ignore
+  }
 }
 
 // Update overlay with detection results
 function updateOverlay(data) {
-  if (!overlayIframe) return;
+  if (!state.overlayIframe) return;
 
-  overlayIframe.contentWindow.postMessage({
+  state.overlayIframe.contentWindow.postMessage({
     type: 'updateResults',
     data: data
   }, '*');
 }
 
 // Listen for messages from background script
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'startDetection') {
-    const interval = message.interval || 1000;
-    startDetection(interval);
-    sendResponse({ success: true });
-  } else if (message.action === 'stopDetection') {
-    stopDetection();
-    sendResponse({ success: true });
-  }
-  return true; // Keep message channel open for async response
-});
+if (!window.deepfakeDetectionListenerAdded) {
+  window.deepfakeDetectionListenerAdded = true;
+  
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    console.log('Content script received message:', message);
+    
+    if (message.action === 'ping') {
+      sendResponse({ success: true, status: 'ready' });
+      return true;
+    } 
+    
+    if (message.action === 'startDetection') {
+      const interval = message.interval || 1000;
+      startDetection(interval);
+      sendResponse({ success: true });
+      return false; // Synchronous response
+    } 
+    
+    if (message.action === 'stopDetection') {
+      stopDetection();
+      sendResponse({ success: true });
+      return true;
+    }
+  });
 
-// Handle overlay messages
-window.addEventListener('message', (event) => {
-  if (event.data.type === 'overlayClose' || event.data.type === 'overlayStop') {
-    stopDetection();
-  }
-});
+  // Handle overlay messages
+  window.addEventListener('message', (event) => {
+    if (event.data.type === 'overlayClose' || event.data.type === 'overlayStop') {
+      stopDetection();
+    }
+  });
 
-// Cleanup on page unload
-window.addEventListener('beforeunload', () => {
-  stopDetection();
-});
+  // Cleanup on page unload
+  window.addEventListener('beforeunload', () => {
+    stopDetection();
+  });
+  
+  console.log('Deepfake Detection: Message listeners registered');
+}

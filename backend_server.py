@@ -16,7 +16,14 @@ from deepfake_detection import DeepfakeDetector, mtcnn, model, DEVICE
 from face_detection import detect_bounding_box
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for browser extension
+# Enable CORS for browser extension with specific settings
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type"]
+    }
+})
 
 # Initialize detector
 detector = DeepfakeDetector(enable_gradcam=False)
@@ -67,6 +74,9 @@ def analyze_frame():
         
         # Get prediction
         fake_prob, real_score, gradcam = detector.analyze_face(face_region)
+        
+        # Debug logging
+        print(f"[DEBUG] Raw fake_prob: {fake_prob}, real_score: {real_score}")
         
         if fake_prob is None:
             return jsonify({
