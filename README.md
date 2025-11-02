@@ -1,4 +1,4 @@
-# 🎭 Real-Time Deepfake Detection
+# 🎭 Real-Time Deepfake Detection 
 
 AI-powered deepfake detection system with **browser extension** for real-time video analysis.
 
